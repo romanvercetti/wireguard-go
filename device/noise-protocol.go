@@ -85,25 +85,32 @@ const (
  */
 
 type MessageInitiation struct {
-	Type         uint32
-	Sender       uint32
-	Ephemeral    NoisePublicKey
-	Static       [NoisePublicKeySize + poly1305.TagSize]byte
-	Timestamp    [tai64n.TimestampSize + poly1305.TagSize]byte
+	Type      uint32
+	Sender    uint32
+	Ephemeral NoisePublicKey
+	Static    [NoisePublicKeySize + poly1305.TagSize]byte
+	Timestamp [tai64n.TimestampSize + poly1305.TagSize]byte
+	// PQCPublicKey must precede MAC1/MAC2: the cookie MACs (cookie.go) are
+	// computed over msg[:len-32] and written to the trailing 32 bytes, so
+	// MAC1/MAC2 have to be the last two fields. This also makes mac1
+	// authenticate the ML-KEM public key.
+	PQCPublicKey [1184]byte
 	MAC1         [blake2s.Size128]byte
 	MAC2         [blake2s.Size128]byte
-	PQCPublicKey [1184]byte
 }
 
 type MessageResponse struct {
-	Type          uint32
-	Sender        uint32
-	Receiver      uint32
-	Ephemeral     NoisePublicKey
-	Empty         [poly1305.TagSize]byte
+	Type      uint32
+	Sender    uint32
+	Receiver  uint32
+	Ephemeral NoisePublicKey
+	Empty     [poly1305.TagSize]byte
+	// PQCCiphertext must precede MAC1/MAC2 (see MessageInitiation): the cookie
+	// MACs occupy the trailing 32 bytes, so the ML-KEM ciphertext has to come
+	// before them or AddMacs would overwrite its tail.
+	PQCCiphertext [1088]byte
 	MAC1          [blake2s.Size128]byte
 	MAC2          [blake2s.Size128]byte
-	PQCCiphertext [1088]byte
 }
 
 type MessageTransport struct {
@@ -132,9 +139,9 @@ func (msg *MessageInitiation) unmarshal(b []byte) error {
 	copy(msg.Ephemeral[:], b[8:])
 	copy(msg.Static[:], b[8+len(msg.Ephemeral):])
 	copy(msg.Timestamp[:], b[8+len(msg.Ephemeral)+len(msg.Static):])
-	copy(msg.MAC1[:], b[8+len(msg.Ephemeral)+len(msg.Static)+len(msg.Timestamp):])
-	copy(msg.MAC2[:], b[8+len(msg.Ephemeral)+len(msg.Static)+len(msg.Timestamp)+len(msg.MAC1):])
-	copy(msg.PQCPublicKey[:], b[8+len(msg.Ephemeral)+len(msg.Static)+len(msg.Timestamp)+len(msg.MAC1)+len(msg.MAC2):])
+	copy(msg.PQCPublicKey[:], b[8+len(msg.Ephemeral)+len(msg.Static)+len(msg.Timestamp):])
+	copy(msg.MAC1[:], b[8+len(msg.Ephemeral)+len(msg.Static)+len(msg.Timestamp)+len(msg.PQCPublicKey):])
+	copy(msg.MAC2[:], b[8+len(msg.Ephemeral)+len(msg.Static)+len(msg.Timestamp)+len(msg.PQCPublicKey)+len(msg.MAC1):])
 
 	return nil
 }
@@ -149,9 +156,9 @@ func (msg *MessageInitiation) marshal(b []byte) error {
 	copy(b[8:], msg.Ephemeral[:])
 	copy(b[8+len(msg.Ephemeral):], msg.Static[:])
 	copy(b[8+len(msg.Ephemeral)+len(msg.Static):], msg.Timestamp[:])
-	copy(b[8+len(msg.Ephemeral)+len(msg.Static)+len(msg.Timestamp):], msg.MAC1[:])
-	copy(b[8+len(msg.Ephemeral)+len(msg.Static)+len(msg.Timestamp)+len(msg.MAC1):], msg.MAC2[:])
-	copy(b[8+len(msg.Ephemeral)+len(msg.Static)+len(msg.Timestamp)+len(msg.MAC1)+len(msg.MAC2):], msg.PQCPublicKey[:])
+	copy(b[8+len(msg.Ephemeral)+len(msg.Static)+len(msg.Timestamp):], msg.PQCPublicKey[:])
+	copy(b[8+len(msg.Ephemeral)+len(msg.Static)+len(msg.Timestamp)+len(msg.PQCPublicKey):], msg.MAC1[:])
+	copy(b[8+len(msg.Ephemeral)+len(msg.Static)+len(msg.Timestamp)+len(msg.PQCPublicKey)+len(msg.MAC1):], msg.MAC2[:])
 
 	return nil
 }
@@ -166,9 +173,9 @@ func (msg *MessageResponse) unmarshal(b []byte) error {
 	msg.Receiver = binary.LittleEndian.Uint32(b[8:])
 	copy(msg.Ephemeral[:], b[12:])
 	copy(msg.Empty[:], b[12+len(msg.Ephemeral):])
-	copy(msg.MAC1[:], b[12+len(msg.Ephemeral)+len(msg.Empty):])
-	copy(msg.MAC2[:], b[12+len(msg.Ephemeral)+len(msg.Empty)+len(msg.MAC1):])
-	copy(msg.PQCCiphertext[:], b[12+len(msg.Ephemeral)+len(msg.Empty)+len(msg.MAC1)+len(msg.MAC2):])
+	copy(msg.PQCCiphertext[:], b[12+len(msg.Ephemeral)+len(msg.Empty):])
+	copy(msg.MAC1[:], b[12+len(msg.Ephemeral)+len(msg.Empty)+len(msg.PQCCiphertext):])
+	copy(msg.MAC2[:], b[12+len(msg.Ephemeral)+len(msg.Empty)+len(msg.PQCCiphertext)+len(msg.MAC1):])
 
 	return nil
 }
@@ -183,9 +190,9 @@ func (msg *MessageResponse) marshal(b []byte) error {
 	binary.LittleEndian.PutUint32(b[8:], msg.Receiver)
 	copy(b[12:], msg.Ephemeral[:])
 	copy(b[12+len(msg.Ephemeral):], msg.Empty[:])
-	copy(b[12+len(msg.Ephemeral)+len(msg.Empty):], msg.MAC1[:])
-	copy(b[12+len(msg.Ephemeral)+len(msg.Empty)+len(msg.MAC1):], msg.MAC2[:])
-	copy(b[12+len(msg.Ephemeral)+len(msg.Empty)+len(msg.MAC1)+len(msg.MAC2):], msg.PQCCiphertext[:])
+	copy(b[12+len(msg.Ephemeral)+len(msg.Empty):], msg.PQCCiphertext[:])
+	copy(b[12+len(msg.Ephemeral)+len(msg.Empty)+len(msg.PQCCiphertext):], msg.MAC1[:])
+	copy(b[12+len(msg.Ephemeral)+len(msg.Empty)+len(msg.PQCCiphertext)+len(msg.MAC1):], msg.MAC2[:])
 
 	return nil
 }
@@ -700,6 +707,12 @@ func (peer *Peer) BeginSymmetricSession() error {
 	keypair := new(Keypair)
 	keypair.send, _ = chacha20poly1305.New(sendKey[:])
 	keypair.receive, _ = chacha20poly1305.New(recvKey[:])
+
+	// Retain the raw transport keys for the FPGA AEAD offload datapath
+	// (consumed by RoutineEncryption/RoutineDecryption when
+	// FpgaOffloadEnabled). Copied before the local key buffers are zeroed.
+	copy(keypair.sendKey[:], sendKey[:])
+	copy(keypair.receiveKey[:], recvKey[:])
 
 	setZero(sendKey[:])
 	setZero(recvKey[:])

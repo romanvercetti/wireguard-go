@@ -463,12 +463,34 @@ func (device *Device) RoutineEncryption(id int) {
 			// encrypt content and release to consumer
 
 			binary.LittleEndian.PutUint64(nonce[4:], elem.nonce)
-			elem.packet = elem.keypair.send.Seal(
-				header,
-				nonce[:],
-				elem.packet,
-				nil,
-			)
+			if FpgaOffloadEnabled {
+				// TX offload: stream the (padded) plaintext to the FPGA AEAD
+				// engine. WireGuard transport records carry empty AAD; the
+				// 12-byte nonce and 32-byte session key drive the core. We
+				// call the driver directly from this worker goroutine — the C
+				// library serialises the QDMA pipeline via its own mutexes.
+				ciphertext, macTag, err := FpgaAeadEncrypt(elem.packet, nil, nonce[:], elem.keypair.sendKey[:])
+				if err != nil {
+					// ENQ_AEAD_ERR_IO: a hardware/DMA state fault. By policy we
+					// never fall back to software — log severe and drop. The
+					// nil packet is skipped by RoutineSequentialSender.
+					device.log.Errorf("FPGA AEAD encrypt hardware fault (remoteIndex=0x%x nonce=%d): %v - dropping packet", elem.keypair.remoteIndex, elem.nonce, err)
+					elem.packet = nil
+					continue
+				}
+				// Reassemble in place as header ‖ ciphertext ‖ tag, the exact
+				// byte layout cipher.AEAD.Seal(header, ...) would have produced.
+				copy(elem.buffer[MessageTransportHeaderSize:], ciphertext)
+				copy(elem.buffer[MessageTransportHeaderSize+len(ciphertext):], macTag)
+				elem.packet = elem.buffer[:MessageTransportHeaderSize+len(ciphertext)+len(macTag)]
+			} else {
+				elem.packet = elem.keypair.send.Seal(
+					header,
+					nonce[:],
+					elem.packet,
+					nil,
+				)
+			}
 		}
 		elemsContainer.Unlock()
 	}
@@ -507,6 +529,11 @@ func (peer *Peer) RoutineSequentialSender(maxBatchSize int) {
 		dataSent := false
 		elemsContainer.Lock()
 		for _, elem := range elemsContainer.elems {
+			if elem.packet == nil {
+				// Encryption failed (e.g. FPGA AEAD hardware fault); the
+				// packet was dropped in RoutineEncryption. Skip it.
+				continue
+			}
 			if len(elem.packet) != MessageKeepaliveSize {
 				dataSent = true
 			}

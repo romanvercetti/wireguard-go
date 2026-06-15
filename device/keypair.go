@@ -11,6 +11,7 @@ import (
 	"sync/atomic"
 	"time"
 
+	"golang.org/x/crypto/chacha20poly1305"
 	"golang.zx2c4.com/wireguard/replay"
 )
 
@@ -22,9 +23,18 @@ import (
  */
 
 type Keypair struct {
-	sendNonce    atomic.Uint64
-	send         cipher.AEAD
-	receive      cipher.AEAD
+	sendNonce atomic.Uint64
+	send      cipher.AEAD
+	receive   cipher.AEAD
+
+	// Raw 256-bit transport keys retained for the FPGA AEAD hardware
+	// offload datapath (see device/fpga_cipher.go). cipher.AEAD does not
+	// expose its key, but fpga_aead_encrypt/decrypt require it as an
+	// explicit argument. The send/receive AEAD instances above remain the
+	// software path used when FpgaOffloadEnabled is false.
+	sendKey    [chacha20poly1305.KeySize]byte
+	receiveKey [chacha20poly1305.KeySize]byte
+
 	replayFilter replay.Filter
 	isInitiator  bool
 	created      time.Time

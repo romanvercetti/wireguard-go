@@ -7,6 +7,8 @@ package device
 import "C"
 import (
 	"errors"
+	"os"
+	"strings"
 	"unsafe"
 )
 var (
@@ -14,6 +16,21 @@ var (
 	ErrFpgaIO          = errors.New("fpga_aead: hardware streaming I/O subsystem failure")
 	FpgaOffloadEnabled = true
 )
+
+// init lets operators disable the hardware datapath at startup on hosts
+// without the Alveo U200 / QDMA character devices (e.g. software-only test
+// rigs), so the daemon uses the in-process ChaCha20-Poly1305 path instead of
+// black-holing every packet. This is a startup mode switch, NOT a per-packet
+// fallback: when offload is enabled a hardware fault always drops the packet
+// (see RoutineEncryption / RoutineDecryption). Default is enabled.
+//
+//	ENQ_FPGA_OFFLOAD=0|off|false|no  -> software AEAD
+func init() {
+	switch strings.ToLower(strings.TrimSpace(os.Getenv("ENQ_FPGA_OFFLOAD"))) {
+	case "0", "off", "false", "no", "disable", "disabled":
+		FpgaOffloadEnabled = false
+	}
+}
 func FpgaAeadEncrypt(plaintext, aad, nonce, key []byte) ([]byte, []byte, error) {
 	if len(nonce) != C.ENQ_AEAD_NONCE_SIZE || len(key) != C.ENQ_AEAD_KEY_SIZE {
 		return nil, nil, ErrFpgaIO

@@ -252,14 +252,46 @@ func (device *Device) RoutineDecryption(id int) {
 			elem.counter = binary.LittleEndian.Uint64(counter)
 			// copy counter to nonce
 			binary.LittleEndian.PutUint64(nonce[0x4:0xc], elem.counter)
-			elem.packet, err = elem.keypair.receive.Open(
-				content[:0],
-				nonce[:],
-				content,
-				nil,
-			)
-			if err != nil {
-				elem.packet = nil
+			if FpgaOffloadEnabled {
+				// RX offload: a transport record is ciphertext ‖ 16-byte tag.
+				// Hand the ciphertext, AAD (empty), nonce, expected tag and
+				// session key to the FPGA AEAD engine for authenticated
+				// decryption. Called directly from this worker goroutine; the
+				// C library serialises the QDMA pipeline internally.
+				if len(content) < chacha20poly1305.Overhead {
+					// Malformed: too short to contain a tag. Drop.
+					elem.packet = nil
+				} else {
+					split := len(content) - chacha20poly1305.Overhead
+					ciphertext := content[:split]
+					macTag := content[split:]
+					var plaintext []byte
+					plaintext, err = FpgaAeadDecrypt(ciphertext, nil, nonce[:], macTag, elem.keypair.receiveKey[:])
+					if err != nil {
+						// ENQ_AEAD_ERR_TAG: authentication failure -> drop
+						// silently (standard WireGuard behaviour). ENQ_AEAD_ERR_IO:
+						// a hardware fault -> log severe and drop; never fall back.
+						if errors.Is(err, ErrFpgaIO) {
+							device.log.Errorf("FPGA AEAD decrypt hardware fault (localIndex=0x%x counter=%d): %v - dropping packet", elem.keypair.localIndex, elem.counter, err)
+						}
+						elem.packet = nil
+					} else {
+						// Write the plaintext back in place at the content
+						// offset, matching the slice cipher.AEAD.Open returns.
+						n := copy(content, plaintext)
+						elem.packet = content[:n]
+					}
+				}
+			} else {
+				elem.packet, err = elem.keypair.receive.Open(
+					content[:0],
+					nonce[:],
+					content,
+					nil,
+				)
+				if err != nil {
+					elem.packet = nil
+				}
 			}
 		}
 		elemsContainer.Unlock()

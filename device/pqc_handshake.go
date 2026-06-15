@@ -8,6 +8,7 @@
 package device
 
 import (
+	"crypto/rand"
 	"errors"
 
 	"github.com/cloudflare/circl/kem/mlkem/mlkem768"
@@ -33,7 +34,7 @@ type PqcPrivateKey struct {
 
 // GeneratePqcKeyPair generates a new ML-KEM-768 ephemeral keypair.
 func GeneratePqcKeyPair() (*PqcPrivateKey, []byte, error) {
-	pk, sk, err := mlkem768.GenerateKeyPair()
+	pk, sk, err := mlkem768.GenerateKeyPair(rand.Reader)
 	if err != nil {
 		return nil, nil, ErrPqcKeyGenFailed
 	}
@@ -49,15 +50,19 @@ func GeneratePqcKeyPair() (*PqcPrivateKey, []byte, error) {
 // PqcEncapsulate generates an ephemeral shared secret and encapsulates it
 // against the provided ML-KEM-768 public key.
 func PqcEncapsulate(pubKeyBytes []byte) (sharedSecret []byte, ciphertext []byte, err error) {
+	if len(pubKeyBytes) != mlkem768.PublicKeySize {
+		return nil, nil, ErrPqcEncapFailed
+	}
 	pk := new(mlkem768.PublicKey)
-	if err := pk.UnmarshalBinary(pubKeyBytes); err != nil {
+	if err := pk.Unpack(pubKeyBytes); err != nil {
 		return nil, nil, ErrPqcEncapFailed
 	}
 
 	ciphertext = make([]byte, mlkem768.CiphertextSize)
 	sharedSecret = make([]byte, mlkem768.SharedKeySize)
 
-	pk.EncapsulateTo(ciphertext, sharedSecret)
+	// seed == nil -> circl draws the encapsulation seed from crypto/rand.Reader.
+	pk.EncapsulateTo(ciphertext, sharedSecret, nil)
 	return sharedSecret, ciphertext, nil
 }
 
@@ -67,10 +72,15 @@ func (sk *PqcPrivateKey) Decapsulate(ciphertext []byte) (sharedSecret []byte, er
 		return nil, ErrPqcDecapFailed
 	}
 
-	sharedSecret = make([]byte, mlkem768.SharedKeySize)
-	if !sk.key.DecapsulateTo(sharedSecret, ciphertext) {
+	if len(ciphertext) != mlkem768.CiphertextSize {
 		return nil, ErrPqcDecapFailed
 	}
+	sharedSecret = make([]byte, mlkem768.SharedKeySize)
+	// ML-KEM is IND-CCA2 with implicit rejection: DecapsulateTo always yields
+	// a shared key (a pseudo-random one for a tampered ciphertext), which then
+	// fails the downstream AEAD transcript check. It panics only on a
+	// wrong-length ciphertext, which the guard above prevents.
+	sk.key.DecapsulateTo(sharedSecret, ciphertext)
 
 	return sharedSecret, nil
 }

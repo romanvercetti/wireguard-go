@@ -286,6 +286,11 @@ func NewDevice(tunDevice tun.Device, bind conn.Bind, logger *Logger) *Device {
 	device.state.state.Store(uint32(deviceStateDown))
 	device.closed = make(chan struct{})
 	device.log = logger
+	if FpgaOffloadEnabled {
+		device.log.Verbosef("ENQ FPGA AEAD offload: ENABLED - transport crypto routed to Alveo U200 (AES-256-GCM via QDMA /dev/qdma_h2c_0,/dev/qdma_c2h_0)")
+	} else {
+		device.log.Verbosef("ENQ FPGA AEAD offload: DISABLED - using software ChaCha20-Poly1305 (set ENQ_FPGA_OFFLOAD=1 to enable)")
+	}
 	device.net.bind = bind
 	device.tun.device = tunDevice
 	mtu, err := device.tun.device.MTU()
