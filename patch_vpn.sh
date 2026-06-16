@@ -13,6 +13,13 @@
 #   1. builds the libenq_aead.so the cgo bridge links against, and
 #   2. asserts the in-tree integration hooks are present.
 #
+# Usage:   ./patch_vpn.sh   (run from anywhere; cd's to its own directory)
+# Config:  No environment inputs. Builds ../libenq_aead.so via that Makefile
+#          and greps the in-tree datapath/cgo hooks. At runtime the daemon
+#          honours ENQ_FPGA_OFFLOAD=0 to disable offload on non-FPGA hosts.
+#
+# Author: romanvercetti <roman.vercetti@gmail.com>
+#
 set -euo pipefail
 
 cd "$(dirname "$0")"
