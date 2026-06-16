@@ -37,6 +37,7 @@ import (
 	"strings"
 	"unsafe"
 )
+
 var (
 	ErrInvalidMacTag   = errors.New("fpga_aead: authentication/tag verification mismatch")
 	ErrFpgaIO          = errors.New("fpga_aead: hardware streaming I/O subsystem failure")
@@ -76,7 +77,9 @@ func FpgaAeadEncrypt(plaintext, aad, nonce, key []byte) ([]byte, []byte, error) 
 	pKey := (*C.uint8_t)(unsafe.Pointer(&key[0]))
 	pMacTag := (*C.uint8_t)(unsafe.Pointer(&macTag[0]))
 	ret := C.fpga_aead_encrypt(pPlaintext, C.size_t(len(plaintext)), pAad, C.size_t(len(aad)), pNonce, pKey, pCiphertext, pMacTag)
-	if ret != C.ENQ_AEAD_SUCCESS { return nil, nil, ErrFpgaIO }
+	if ret != C.ENQ_AEAD_SUCCESS {
+		return nil, nil, ErrFpgaIO
+	}
 	return ciphertext, macTag, nil
 }
 func FpgaAeadDecrypt(ciphertext, aad, nonce, macTag, key []byte) ([]byte, error) {
@@ -98,8 +101,11 @@ func FpgaAeadDecrypt(ciphertext, aad, nonce, macTag, key []byte) ([]byte, error)
 	pKey := (*C.uint8_t)(unsafe.Pointer(&key[0]))
 	ret := C.fpga_aead_decrypt(pCiphertext, C.size_t(len(ciphertext)), pAad, C.size_t(len(aad)), pNonce, pMacTag, pKey, pPlaintext)
 	switch ret {
-	case C.ENQ_AEAD_SUCCESS: return plaintext, nil
-	case C.ENQ_AEAD_ERR_TAG: return nil, ErrInvalidMacTag
-	default: return nil, ErrFpgaIO
+	case C.ENQ_AEAD_SUCCESS:
+		return plaintext, nil
+	case C.ENQ_AEAD_ERR_TAG:
+		return nil, ErrInvalidMacTag
+	default:
+		return nil, ErrFpgaIO
 	}
 }

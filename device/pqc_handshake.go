@@ -15,8 +15,8 @@ import (
 )
 
 const (
-	PQCPublicKeySize  = mlkem768.PublicKeySize
-	PQCCiphertextSize = mlkem768.CiphertextSize
+	PQCPublicKeySize    = mlkem768.PublicKeySize
+	PQCCiphertextSize   = mlkem768.CiphertextSize
 	PQCSharedSecretSize = mlkem768.SharedKeySize
 )
 
@@ -38,12 +38,12 @@ func GeneratePqcKeyPair() (*PqcPrivateKey, []byte, error) {
 	if err != nil {
 		return nil, nil, ErrPqcKeyGenFailed
 	}
-	
+
 	pubKeyBytes, err := pk.MarshalBinary()
 	if err != nil {
 		return nil, nil, ErrPqcKeyGenFailed
 	}
-	
+
 	return &PqcPrivateKey{key: sk}, pubKeyBytes, nil
 }
 

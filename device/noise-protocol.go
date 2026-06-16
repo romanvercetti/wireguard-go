@@ -6,13 +6,13 @@
 package device
 
 import (
+	"crypto/sha256"
 	"encoding/binary"
 	"errors"
 	"fmt"
+	"golang.org/x/crypto/hkdf"
 	"sync"
 	"time"
-	"crypto/sha256"
-	"golang.org/x/crypto/hkdf"
 
 	"golang.org/x/crypto/blake2s"
 	"golang.org/x/crypto/chacha20poly1305"
