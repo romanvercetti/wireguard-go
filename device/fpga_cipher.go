@@ -1,4 +1,30 @@
+/* SPDX-License-Identifier: MIT
+ *
+ * Copyright (C) 2025 ENQUANTUM. All Rights Reserved.
+ *
+ * fpga_cipher.go
+ *
+ * cgo bridge from the wireguard-go transport data path to the ENQ-OS FPGA
+ * AEAD hardware offload library (libenq_aead). The Alveo U200 / OpenNIC
+ * shell exposes the ENQUANTUM AEAD IP core over Xilinx QDMA character
+ * devices (/dev/qdma_h2c_0, /dev/qdma_c2h_0); libenq_aead abstracts that
+ * streaming PCIe interface into the two blocking primitives wrapped here:
+ *
+ *   FpgaAeadEncrypt -> C.fpga_aead_encrypt  (TX path, RoutineEncryption)
+ *   FpgaAeadDecrypt -> C.fpga_aead_decrypt  (RX path, RoutineDecryption)
+ *
+ * Concurrency: these wrappers add NO locking. The encryption/decryption
+ * worker goroutines call them directly; the C library serialises the QDMA
+ * pipeline internally via its own POSIX mutexes (g_h2c_mutex / g_c2h_mutex).
+ *
+ * Build: requires CGO_ENABLED=1 and libenq_aead.{so,h}. The cgo directives
+ * below resolve the system install prefix (/usr/local); the top-level
+ * Makefile additionally points cgo at the in-tree driver source so the test
+ * binary builds without a prior `make install`.
+ */
+
 package device
+
 /*
 #cgo LDFLAGS: -L/usr/local/lib -lenq_aead
 #cgo CFLAGS: -I/usr/local/include

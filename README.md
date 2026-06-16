@@ -54,6 +54,72 @@ $ cd wireguard-go
 $ make
 ```
 
+## ENQUANTUM FPGA AEAD Hardware Offload
+
+This build of wireguard-go is integrated with the ENQ-OS FPGA AEAD hardware
+offload datapath. The symmetric transport AEAD (normally ChaCha20-Poly1305 in
+software) is rerouted to the ENQUANTUM AEAD IP core on an AMD Xilinx Alveo U200
+(OpenNIC shell) over PCIe Gen3 x16, accessed through the Xilinx QDMA character
+devices `/dev/qdma_h2c_0` (host-to-card) and `/dev/qdma_c2h_0` (card-to-host).
+
+### Architecture
+
+* **`device/fpga_cipher.go`** — cgo bridge wrapping `fpga_aead_encrypt()` and
+  `fpga_aead_decrypt()` from the `libenq_aead` driver (`../libenq_aead.{c,h}`).
+* **TX (`device/send.go`, `RoutineEncryption`)** — the padded transport
+  plaintext, empty AAD, 12-byte nonce and 32-byte session send key are streamed
+  to `FpgaAeadEncrypt`; the resulting ciphertext and 16-byte tag are reassembled
+  in place as `header ‖ ciphertext ‖ tag`, byte-identical to the software
+  `cipher.AEAD.Seal` layout.
+* **RX (`device/receive.go`, `RoutineDecryption`)** — each transport record is
+  split into `ciphertext ‖ tag`; both, plus empty AAD, the nonce and the session
+  receive key, are handed to `FpgaAeadDecrypt` for authenticated decryption.
+* **Keys (`device/keypair.go`, `device/noise-protocol.go`)** — `cipher.AEAD`
+  does not expose its key, so `BeginSymmetricSession` retains the raw 256-bit
+  send/receive transport keys (`sendKey` / `receiveKey`) for the hardware path.
+
+### Concurrency
+
+No locking is added in the VPN code around the hardware calls. The encryption
+and decryption worker goroutines invoke the driver directly; `libenq_aead`
+serialises the QDMA pipeline internally via its own POSIX mutexes
+(`g_h2c_mutex`, `g_c2h_mutex`).
+
+### Error handling
+
+* `ENQ_AEAD_ERR_IO` (-1): a hardware/DMA state fault is logged as a severe
+  error and the packet is dropped. There is **no** per-packet fallback to
+  software AEAD — a hardware state failure must trigger an active investigation.
+* `ENQ_AEAD_ERR_TAG` (-2): authentication failed; the packet is dropped
+  silently, matching standard WireGuard behaviour.
+
+### Runtime switch
+
+Hosts without the Alveo U200 / QDMA character devices (e.g. software-only test
+rigs) can disable the hardware datapath at **startup** so the daemon uses the
+in-process ChaCha20-Poly1305 path instead of black-holing every packet:
+
+```
+$ ENQ_FPGA_OFFLOAD=0 wireguard-go wg0
+```
+
+This is a startup mode switch, not a per-packet fallback. When offload is
+enabled, a hardware fault always drops the packet (see above). The switch is
+enabled by default.
+
+### Building with the offload
+
+The cgo bridge requires `CGO_ENABLED=1` and the `libenq_aead` shared object and
+header. The top-level `Makefile` builds the driver from `../libenq_aead.c`
+(override with `ENQ_AEAD_DIR`), points cgo at it, and bakes in an rpath, so a
+system-wide `make install` of the `.so` is not required to build or run the
+binary:
+
+```
+$ make            # builds ../libenq_aead.so then the cgo wireguard-go binary
+$ make install    # also installs the .so/.h under $(PREFIX)/{lib,include}
+```
+
 ## License
 
     Copyright (C) 2017-2025 WireGuard LLC. All Rights Reserved.
